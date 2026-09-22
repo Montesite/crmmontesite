@@ -331,15 +331,25 @@ serve(async (req) => {
         .map(([, row]) => row.domain);
 
       if (domainsGoneMissing.length > 0) {
-        // Só reclassifica quando a checagem da VPS funcionou de verdade (senão
-        // fica tudo "não é VPS" na primeira falha e perde a distinção à toa).
+        // O AdminBolt saiu do ar de vez em 2026-09-22 (ver comentário em
+        // fetchVpsDomains) - vpsDomains fica sempre vazio agora, então
+        // vpsCheckAvailable é sempre false na prática. Com a migração pra
+        // VPS já concluída (11 sites migrados naquele mesmo dia, ver
+        // MIGRACOES.md), todo domínio que some da Hostinger hoje em diante é
+        // overwhelmingly um cancelamento, não uma nova migração - por isso o
+        // fallback (sem checagem de VPS disponível) agora é "decommissioned",
+        // não "migrado pra VPS". Antes disso, esse fallback tratava tudo como
+        // "migrado pra VPS" por padrão e chegou a classificar ~30 sites
+        // deletados manualmente da Hostinger em 2026-09-22 (achado auditando
+        // o pedido do usuário sobre os domínios lelepepe que ele excluiu) como
+        // "Migrado p/ VPS" quando na verdade foram apenas cancelados.
         const vpsCheckAvailable = vpsDomains.size > 0;
         const migratedToVps = vpsCheckAvailable
           ? domainsGoneMissing.filter((d) => vpsDomains.has(d.toLowerCase()))
-          : domainsGoneMissing;
+          : [];
         const decommissioned = vpsCheckAvailable
           ? domainsGoneMissing.filter((d) => !vpsDomains.has(d.toLowerCase()))
-          : [];
+          : domainsGoneMissing;
 
         if (migratedToVps.length > 0) {
           const { error: vpsError } = await supabase
