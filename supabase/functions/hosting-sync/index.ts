@@ -124,11 +124,23 @@ QqszKbrAKbkTidOIijlBO8n9pu0f9GBj39ItVQGL
 // ou se foi removido por outro motivo (deleted_at + is_decommissioned = true).
 // Sem isso não dava pra distinguir os dois casos - qualquer site que saísse
 // da Hostinger virava "Migrado p/ VPS" por padrão, estivesse ele lá ou não.
+//
+// A VPS foi reinstalada em 2026-09-22 (AdminBolt trocado por HestiaCP, que
+// exigia licença paga) - o endpoint do AdminBolt não existe mais e nunca vai
+// responder de novo. Sem timeout aqui, o fetch ficava pendurado até o limite
+// de tempo da própria function (bem além dos 60-120s de qualquer chamador),
+// travando o hosting-sync inteiro - inclusive a reclassificação de sites que
+// não têm nada a ver com a VPS. Com o timeout, a chamada falha rápido e cai
+// no fallback (vpsDomains vazio) normalmente. TODO: trocar esse endpoint pelo
+// equivalente do HestiaCP assim que os sites forem recriados lá.
 async function fetchVpsDomains(apiUrl: string, apiKey: string, apiSecret: string): Promise<Set<string>> {
   const client = Deno.createHttpClient({ caCerts: [ZEROSSL_INTERMEDIATE_PEM, SECTIGO_ROOT_PEM] });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
   try {
     const res = await fetch(`${apiUrl}/api/hosting-accounts?per_page=200`, {
       client,
+      signal: controller.signal,
       headers: { 'X-API-Key': apiKey, 'X-API-Secret': apiSecret, Accept: 'application/json' },
     });
     if (!res.ok) {
@@ -138,6 +150,7 @@ async function fetchVpsDomains(apiUrl: string, apiKey: string, apiSecret: string
     const accounts: { domain: string }[] = Array.isArray(data) ? data : data.data ?? [];
     return new Set(accounts.map((a) => a.domain.toLowerCase()));
   } finally {
+    clearTimeout(timer);
     client.close();
   }
 }
