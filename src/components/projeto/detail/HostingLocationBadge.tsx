@@ -25,7 +25,7 @@ export const HostingLocationBadge: React.FC<HostingLocationBadgeProps> = ({ proj
     return (
       <Badge variant="outline" className="text-xs gap-1 text-amber-600 border-amber-500/30 bg-amber-500/10">
         <Server className="h-3 w-3" />
-        Hospedado na VPS (AdminBolt)
+        Hospedado na VPS (Hestia)
       </Badge>
     );
   }

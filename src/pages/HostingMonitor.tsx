@@ -325,10 +325,10 @@ export default function HostingMonitor() {
               <CardTitle className="text-sm font-medium flex items-center justify-between">
                 <span className="flex items-center gap-1.5">
                   <Server className="h-4 w-4 text-amber-600" />
-                  VPS AdminBolt
+                  VPS Hestia
                 </span>
                 <Badge variant="outline" className="text-amber-600 border-amber-500/30 bg-amber-500/10">
-                  2.25.231.60
+                  76.13.174.32
                 </Badge>
               </CardTitle>
             </CardHeader>
@@ -340,7 +340,7 @@ export default function HostingMonitor() {
                 <span className="font-medium">{vpsMigratedCount}</span>
               </div>
               <p className="text-xs text-muted-foreground">
-                Sites que saíram da Hostinger e passaram a ser hospedados na própria VPS. Contagem ainda manual — sincronização automática entra amanhã.
+                Sites que saíram da Hostinger e passaram a ser hospedados na nossa própria VPS (HestiaCP).
               </p>
             </CardContent>
           </Card>
@@ -469,7 +469,7 @@ export default function HostingMonitor() {
                         <SelectItem value="all">Todas</SelectItem>
                         <SelectItem value="h5g">Agency Growth</SelectItem>
                         <SelectItem value="cloudlinux">Cloud Professional</SelectItem>
-                        <SelectItem value="vps">VPS (AdminBolt)</SelectItem>
+                        <SelectItem value="vps">VPS (Hestia)</SelectItem>
                         <SelectItem value="no_hosting">Sem hospedagem</SelectItem>
                       </SelectContent>
                     </Select>
@@ -588,7 +588,7 @@ export default function HostingMonitor() {
                             ) : site.deleted_at ? (
                               <Badge variant="outline" className="gap-1 text-amber-600 border-amber-500/30 bg-amber-500/10">
                                 <Server className="h-3 w-3" />
-                                VPS (AdminBolt)
+                                VPS (Hestia)
                               </Badge>
                             ) : (
                               <Badge variant="outline" className="text-purple-600 border-purple-500/30 bg-purple-500/10">
