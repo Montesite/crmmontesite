@@ -185,6 +185,140 @@ interface LiveCheckResult {
   note: string | null;
 }
 
+// Sufixos de segundo nível reais do .br (registro.br) - sem essa lista não dá
+// pra saber se "previa.cliente.com.br" tem apex "cliente.com.br" (3 rótulos)
+// ou se um domínio como "empresa.br" (registro direto, 2 rótulos) já é o
+// apex. Precisamos do apex certo pra consultar o RDAP (ele só responde pelo
+// domínio registrável, não por qualquer subdomínio).
+const BR_SECOND_LEVEL_SUFFIXES = new Set([
+  'com.br', 'net.br', 'org.br', 'gov.br', 'edu.br', 'mil.br', 'art.br', 'adv.br', 'arq.br', 'bio.br',
+  'bmd.br', 'cim.br', 'cng.br', 'cnt.br', 'coop.br', 'ecn.br', 'eco.br', 'emp.br', 'eng.br', 'esp.br',
+  'etc.br', 'eti.br', 'far.br', 'fnd.br', 'fot.br', 'fst.br', 'g12.br', 'ggf.br', 'imb.br', 'ind.br',
+  'inf.br', 'jor.br', 'jus.br', 'leg.br', 'lel.br', 'mat.br', 'med.br', 'mus.br', 'not.br', 'ntr.br',
+  'odo.br', 'ppg.br', 'pro.br', 'psc.br', 'psi.br', 'qsl.br', 'radio.br', 'rec.br', 'slg.br', 'srv.br',
+  'tmp.br', 'trd.br', 'tur.br', 'tv.br', 'vet.br', 'vlog.br', 'wiki.br', 'zlg.br',
+]);
+
+function getBrApexDomain(domain: string): string | null {
+  const host = domain.toLowerCase().replace(/^www\./, '').split('/')[0].split(':')[0];
+  if (!host.endsWith('.br')) return null;
+  const labels = host.split('.');
+  if (labels.length >= 3 && BR_SECOND_LEVEL_SUFFIXES.has(labels.slice(-2).join('.'))) {
+    return labels.slice(-3).join('.');
+  }
+  return labels.slice(-2).join('.');
+}
+
+interface DomainRegistryInfo {
+  status: string; // 'active' | 'inactive' | 'not_registered' | 'check_failed' | outro status cru do RDAP
+  expiresAt: string | null;
+  nameservers: string | null;
+}
+
+// Achado auditando manualmente os sites "fora do ar" em 2026-09-22 (planilha
+// do Victor): a mensagem genérica de erro de rede não distingue "domínio
+// vencido", "domínio nem chegou a ser registrado de verdade" (caso real:
+// ferrovelholeonardo.com.br aparecia "Active" na API da Hostinger mas o RDAP
+// do registro.br devolvia 404 - disponível pra qualquer um registrar) e
+// "domínio ativo, problema é só de DNS/hospedagem". O RDAP público do
+// registro.br (sem chave, sem custo) resolve isso pra qualquer TLD .br -
+// ainda não cobrimos outros TLDs (precisariam de outro serviço RDAP por
+// registro).
+async function checkDomainRegistryBr(domain: string): Promise<DomainRegistryInfo | null> {
+  const apex = getBrApexDomain(domain);
+  if (!apex) return null;
+  try {
+    const res = await fetchWithTimeout(`https://rdap.registro.br/domain/${apex}`, {}, FETCH_TIMEOUT_MS);
+    if (res.status === 404) {
+      return { status: 'not_registered', expiresAt: null, nameservers: null };
+    }
+    if (!res.ok) {
+      return { status: 'check_failed', expiresAt: null, nameservers: null };
+    }
+    const data = await res.json();
+    const statusList: string[] = Array.isArray(data.status) ? data.status : [];
+    const status = statusList.includes('active') ? 'active' : statusList.includes('inactive') ? 'inactive' : (statusList[0] ?? 'unknown');
+    const events = Array.isArray(data.events) ? data.events : [];
+    const expiresAt = events.find((e: { eventAction?: string }) => e.eventAction === 'expiration')?.eventDate ?? null;
+    const nsList = Array.isArray(data.nameservers) ? data.nameservers : [];
+    const nameservers = nsList.map((ns: { ldhName?: string }) => ns.ldhName).filter(Boolean).join(', ') || null;
+    return { status, expiresAt, nameservers };
+  } catch (e) {
+    console.error(`Falha ao consultar RDAP registro.br pra ${apex}:`, e);
+    return { status: 'check_failed', expiresAt: null, nameservers: null };
+  }
+}
+
+function formatDateBr(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString('pt-BR', { timeZone: 'UTC' });
+  } catch {
+    return iso;
+  }
+}
+
+// Monta uma mensagem específica a partir do status real do registro,
+// substituindo a mensagem genérica de "DNS quebrado, certificado inválido ou
+// fora do ar" por um diagnóstico acionável.
+function buildRegistryNote(registry: DomainRegistryInfo, fallbackNote: string | null): string {
+  if (registry.status === 'not_registered') {
+    return '🚨 Domínio NÃO está registrado no registro.br (disponível pra qualquer um registrar agora) - risco de perda, registrar imediatamente se for manter.';
+  }
+  if (registry.status === 'inactive') {
+    const expired = !!registry.expiresAt && new Date(registry.expiresAt).getTime() < Date.now();
+    if (expired) {
+      return `Domínio vencido em ${formatDateBr(registry.expiresAt!)} (registro.br) - renovar para voltar ao ar.`;
+    }
+    const expiresText = registry.expiresAt ? formatDateBr(registry.expiresAt) : 'data desconhecida';
+    return `Domínio com pendência no registro.br (dados do titular ou documentação, não é falta de pagamento) - ainda dentro da validade (vence ${expiresText}). Verificar pendência no painel do registro.br.`;
+  }
+  if (registry.status === 'active') {
+    const suffix = registry.expiresAt ? ` (vence ${formatDateBr(registry.expiresAt)})` : '';
+    return `${fallbackNote ?? 'Site fora do ar'} - domínio está ativo/registrado${suffix}; problema é de DNS ou hospedagem, não do registro do domínio.`;
+  }
+  return fallbackNote ?? 'Site fora do ar - motivo não identificado.';
+}
+
+interface RegistryUpdateFields {
+  client_action_note: string | null;
+  domain_registry_status: string | null;
+  domain_expires_at: string | null;
+  domain_nameservers: string | null;
+  domain_checked_at: string | null;
+}
+
+// Só consulta o RDAP quando o domínio já foi flagado com problema - a imensa
+// maioria dos ~600 sites ativos está saudável, então chamar o registro.br pra
+// todo mundo seria trabalho e risco de rate-limit à toa.
+async function buildRegistryFields(domain: string, live: LiveCheckResult, now: string): Promise<RegistryUpdateFields> {
+  if (!live.needsClientAction) {
+    return {
+      client_action_note: live.note,
+      domain_registry_status: null,
+      domain_expires_at: null,
+      domain_nameservers: null,
+      domain_checked_at: null,
+    };
+  }
+  const registry = await checkDomainRegistryBr(domain);
+  if (!registry) {
+    return {
+      client_action_note: live.note,
+      domain_registry_status: null,
+      domain_expires_at: null,
+      domain_nameservers: null,
+      domain_checked_at: null,
+    };
+  }
+  return {
+    client_action_note: buildRegistryNote(registry, live.note),
+    domain_registry_status: registry.status,
+    domain_expires_at: registry.expiresAt,
+    domain_nameservers: registry.nameservers,
+    domain_checked_at: now,
+  };
+}
+
 // Lê no máximo MAX_LIVE_BODY_BYTES do corpo da resposta - o suficiente pra
 // qualquer checagem de texto/placeholder que fazemos, sem carregar na memória
 // uma resposta anormalmente grande (vídeo/arquivo servido sem content-type
@@ -367,7 +501,7 @@ serve(async (req) => {
         if (!site.is_decommissioned) {
           const live = await checkLiveSite(site.domain);
           update.needs_client_action = live.needsClientAction;
-          update.client_action_note = live.note;
+          Object.assign(update, await buildRegistryFields(site.domain, live, now));
           if (live.needsClientAction) needsClientAction += 1;
         }
         await supabase.from('hosting_websites').update(update).eq('id', site.id);
@@ -409,7 +543,7 @@ serve(async (req) => {
           // e sim um needs_client_action com o motivo de verdade.
           const live = await checkLiveSite(site.domain);
           update.needs_client_action = live.needsClientAction;
-          update.client_action_note = live.note;
+          Object.assign(update, await buildRegistryFields(site.domain, live, now));
           if (live.needsClientAction) {
             needsClientAction += 1;
           }

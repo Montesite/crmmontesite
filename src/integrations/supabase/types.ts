@@ -244,6 +244,10 @@ export type Database = {
           client_action_note: string | null
           deleted_at: string | null
           domain: string
+          domain_checked_at: string | null
+          domain_expires_at: string | null
+          domain_nameservers: string | null
+          domain_registry_status: string | null
           external_uid: string | null
           first_seen_at: string
           github_backup_url: string | null
@@ -267,6 +271,10 @@ export type Database = {
           client_action_note?: string | null
           deleted_at?: string | null
           domain: string
+          domain_checked_at?: string | null
+          domain_expires_at?: string | null
+          domain_nameservers?: string | null
+          domain_registry_status?: string | null
           external_uid?: string | null
           first_seen_at?: string
           github_backup_url?: string | null
@@ -290,6 +298,10 @@ export type Database = {
           client_action_note?: string | null
           deleted_at?: string | null
           domain?: string
+          domain_checked_at?: string | null
+          domain_expires_at?: string | null
+          domain_nameservers?: string | null
+          domain_registry_status?: string | null
           external_uid?: string | null
           first_seen_at?: string
           github_backup_url?: string | null

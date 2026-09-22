@@ -39,6 +39,8 @@ import {
   CheckCircle2,
   XCircle,
   Code,
+  CalendarClock,
+  Phone,
 } from "lucide-react";
 import { WebsiteRowActions } from "@/components/hosting/WebsiteRowActions";
 import { getFunctionErrorMessage } from "@/lib/functionError";
@@ -144,6 +146,33 @@ function GithubStatusBadge({
   );
 }
 
+function daysUntil(dateStr: string): number {
+  return Math.ceil((new Date(dateStr).getTime() - Date.now()) / (24 * 60 * 60 * 1000));
+}
+
+function whatsappLink(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  return `https://wa.me/${digits.length <= 11 ? "55" : ""}${digits}`;
+}
+
+function ExpiryBadge({ days }: { days: number }) {
+  if (days <= 15) {
+    return <Badge className="bg-red-600 hover:bg-red-600">Vence em {days} dia{days === 1 ? "" : "s"}</Badge>;
+  }
+  if (days <= 30) {
+    return (
+      <Badge variant="outline" className="text-amber-600 border-amber-500/30 bg-amber-500/10">
+        Vence em {days} dias
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="outline" className="text-muted-foreground">
+      Vence em {days} dias
+    </Badge>
+  );
+}
+
 function timeAgo(date: string) {
   const diff = Date.now() - new Date(date).getTime();
   const minutes = Math.floor(diff / 60000);
@@ -160,6 +189,7 @@ export default function HostingMonitor() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [syncing, setSyncing] = useState(false);
+  const [syncingExpiry, setSyncingExpiry] = useState(false);
   const [platformFilter, setPlatformFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
@@ -183,7 +213,7 @@ export default function HostingMonitor() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("hosting_websites")
-        .select("*, projects:linked_project_id (id, client_name, project_link)")
+        .select("*, projects:linked_project_id (id, client_name, project_link, telefone)")
         .order("last_seen_at", { ascending: false });
       if (error) throw error;
       return data;
@@ -254,6 +284,22 @@ export default function HostingMonitor() {
   );
   const foraDoArCount = noHostingSites.length + needsClientActionSites.length;
 
+  // Domínios com data de expiração conhecida (via RDAP do registro.br, ver
+  // domain-expiry-sync) que vencem dentro de 60 dias e ainda não venceram -
+  // os já vencidos aparecem em "Fora do ar", aqui é só o aviso prévio pra dar
+  // tempo de cobrar o cliente antes do domínio cair de vez.
+  const expiringSoonSites = useMemo(() => {
+    const list = websites ?? [];
+    const SIXTY_DAYS_MS = 60 * 24 * 60 * 60 * 1000;
+    return list
+      .filter((w) => {
+        if (!w.domain_expires_at || w.is_decommissioned) return false;
+        const msUntil = new Date(w.domain_expires_at).getTime() - Date.now();
+        return msUntil > 0 && msUntil <= SIXTY_DAYS_MS;
+      })
+      .sort((a, b) => new Date(a.domain_expires_at!).getTime() - new Date(b.domain_expires_at!).getTime());
+  }, [websites]);
+
   const totalPages = Math.max(1, Math.ceil(filteredWebsites.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const paginatedWebsites = useMemo(
@@ -304,6 +350,32 @@ export default function HostingMonitor() {
       });
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleExpirySync = async () => {
+    setSyncingExpiry(true);
+    try {
+      const response = await supabase.functions.invoke("domain-expiry-sync", { body: {} });
+      if (response.error) {
+        const message = await getFunctionErrorMessage(response.error, "Erro ao checar vencimentos");
+        throw new Error(message);
+      }
+      const result = response.data;
+      toast({
+        title: "Checagem de vencimento concluída",
+        description: `${result.checked ?? 0} domínio(s) consultado(s) no registro.br, ${result.expiring_soon_60d ?? 0} vencendo em até 60 dias.`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["hosting_websites"] });
+    } catch (error) {
+      console.error("Erro ao checar vencimento de domínios:", error);
+      toast({
+        title: "Erro",
+        description: error instanceof Error ? error.message : "Não foi possível checar os vencimentos.",
+        variant: "destructive",
+      });
+    } finally {
+      setSyncingExpiry(false);
     }
   };
 
@@ -436,6 +508,13 @@ export default function HostingMonitor() {
               Fora do ar
               {foraDoArCount > 0 && (
                 <Badge className="bg-red-600 hover:bg-red-600 h-5 px-1.5">{foraDoArCount}</Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="vencendo" className="gap-1.5">
+              <CalendarClock className="h-3.5 w-3.5 text-amber-600" />
+              Vencendo
+              {expiringSoonSites.length > 0 && (
+                <Badge className="bg-amber-500 hover:bg-amber-500 h-5 px-1.5">{expiringSoonSites.length}</Badge>
               )}
             </TabsTrigger>
           </TabsList>
@@ -847,6 +926,87 @@ export default function HostingMonitor() {
                 ) : (
                   <div className="text-center py-8 text-muted-foreground">
                     Nenhum site sem hospedagem no momento.
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="vencendo" className="space-y-4">
+            <Card className="border-amber-500/30">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between gap-3">
+                  <CardTitle className="text-sm font-medium flex items-center gap-1.5 text-amber-600">
+                    <CalendarClock className="h-4 w-4" />
+                    Domínios vencendo em até 60 dias ({expiringSoonSites.length})
+                  </CardTitle>
+                  <Button size="sm" variant="outline" onClick={handleExpirySync} disabled={syncingExpiry}>
+                    <RefreshCw className={`h-3.5 w-3.5 mr-1 ${syncingExpiry ? "animate-spin" : ""}`} />
+                    Checar vencimentos agora
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Data de vencimento consultada direto no registro.br (RDAP), reconferida por rodízio ao longo das
+                  semanas. Muitos desses domínios são registrados pelo próprio cliente (fora da nossa conta
+                  Hostinger) — só ele consegue renovar, então o alerta aqui é pra entrar em contato a tempo de
+                  cobrar o pagamento antes do domínio cair.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-1">
+                {expiringSoonSites.length > 0 ? (
+                  expiringSoonSites.map((site) => {
+                    const phone = site.projects?.telefone;
+                    return (
+                      <div
+                        key={site.id}
+                        className="flex items-center justify-between gap-3 py-2 border-b last:border-0"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-sm font-medium truncate">{site.domain}</p>
+                            <ExpiryBadge days={daysUntil(site.domain_expires_at!)} />
+                            {site.domain_registry_status === "inactive" && (
+                              <Badge variant="outline" className="text-red-600 border-red-500/30 bg-red-500/10 shrink-0">
+                                Pendência no registro.br
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                            {site.projects ? (
+                              <Link
+                                to={`/projeto/${site.projects.id}`}
+                                className="text-xs text-primary hover:underline"
+                              >
+                                {site.projects.client_name}
+                              </Link>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">Sem projeto vinculado</span>
+                            )}
+                            {phone && (
+                              <>
+                                <span className="text-xs text-muted-foreground">·</span>
+                                <a
+                                  href={whatsappLink(phone)}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-xs text-green-600 hover:underline flex items-center gap-1"
+                                >
+                                  <Phone className="h-3 w-3" /> Chamar no WhatsApp
+                                </a>
+                              </>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Vence em {new Date(site.domain_expires_at!).toLocaleDateString("pt-BR", { timeZone: "UTC" })}
+                          </p>
+                        </div>
+                        <WebsiteRowActions site={site} />
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    Nenhum domínio vencendo nos próximos 60 dias.
                   </div>
                 )}
               </CardContent>

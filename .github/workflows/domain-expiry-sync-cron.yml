@@ -1,0 +1,35 @@
+name: Checar vencimento de domínios (RDAP)
+
+on:
+  schedule:
+    # 1x/semana - data de expiração de domínio não muda de uma hora pra
+    # outra, e com BATCH_SIZE=200 (ver index.ts) isso já cobre a base inteira
+    # de domínios .br em ~3 semanas.
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🗓️ Chamar domain-expiry-sync
+        run: |
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            "${{ secrets.VITE_SUPABASE_URL }}/functions/v1/domain-expiry-sync" \
+            -H "apikey: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            --max-time 350)
+          body=$(echo "$response" | head -n -1)
+          status=$(echo "$response" | tail -n 1)
+          echo "$body"
+          echo "## Checagem de vencimento de domínios" >> "$GITHUB_STEP_SUMMARY"
+          echo "**HTTP status:** $status" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          echo "$body" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" -ge 300 ]; then
+            echo "domain-expiry-sync falhou (HTTP $status)"
+            exit 1
+          fi
