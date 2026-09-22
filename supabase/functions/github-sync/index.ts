@@ -167,6 +167,18 @@ function detectHostingPlaceholder(html: string): string | null {
   return null;
 }
 
+// Domínios do nosso próprio ambiente na Hostinger ("Faça Seu Site" e os
+// subdomínios de prévia), não hospedagem de cliente. Ficam no ar de propósito
+// e respondem 403/certificado próprio por design, então checar se "estão no
+// ar" só gera alarme falso numa aba que existe pra listar site de cliente com
+// problema. Confirmado com o usuário em 2026-09-22: mantê-los na Hostinger.
+const INTERNAL_DOMAIN_SUFFIXES = ['facaseusite.com.br'];
+
+function isInternalDomain(domain: string): boolean {
+  const host = domain.toLowerCase().replace(/^www\./, '').split('/')[0];
+  return INTERNAL_DOMAIN_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
+}
+
 interface LiveCheckResult {
   html: string | null;
   needsClientAction: boolean;
@@ -319,8 +331,26 @@ serve(async (req) => {
     let noMatch = 0;
     let errors = 0;
     let needsClientAction = 0;
+    let internal = 0;
 
     await mapWithConcurrency(sites ?? [], CONCURRENCY, async (site: HostingWebsiteRow) => {
+      // Domínio interno nosso: só registra que passou pela rodada, sem abrir o
+      // site nem procurar repositório, e limpa qualquer flag de problema que
+      // tenha sobrado de antes de existir essa exceção.
+      if (isInternalDomain(site.domain)) {
+        internal += 1;
+        await supabase
+          .from('hosting_websites')
+          .update({
+            github_sync_status: 'internal',
+            github_checked_at: now,
+            needs_client_action: false,
+            client_action_note: null,
+          })
+          .eq('id', site.id);
+        return;
+      }
+
       const clientName = Array.isArray(site.projects) ? site.projects[0]?.client_name : site.projects?.client_name;
 
       let repo: GithubRepo | null = null;
@@ -435,6 +465,7 @@ serve(async (req) => {
         no_match: noMatch,
         errors,
         needs_client_action: needsClientAction,
+        internal,
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

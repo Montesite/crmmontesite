@@ -125,6 +125,12 @@ function GithubStatusBadge({
             Sem repositório
           </Badge>
         );
+      case "internal":
+        return (
+          <Badge variant="outline" className="gap-1 text-muted-foreground">
+            Domínio interno
+          </Badge>
+        );
       default:
         return <span className="text-muted-foreground text-xs">—</span>;
     }
