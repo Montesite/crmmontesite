@@ -239,10 +239,15 @@ export default function HostingMonitor() {
   }, [websites, search, platformFilter, statusFilter, dateFrom, dateTo]);
 
   const vpsMigratedCount = websites?.filter((w) => w.deleted_at && !w.is_decommissioned).length ?? 0;
-  const noHostingSites = useMemo(
-    () => (websites ?? []).filter((w) => w.is_decommissioned),
-    [websites]
-  );
+  const noHostingSites = useMemo(() => {
+    const list = websites ?? [];
+    // Um domínio pode ter mais de uma linha (uma por order_id da Hostinger) quando
+    // migra de plano - a linha antiga fica "is_decommissioned" mesmo o domínio
+    // continuando no ar sob outro plano. Não mostra como "sem hospedagem" se existir
+    // outra linha do mesmo domínio ativa (deleted_at null).
+    const activeDomains = new Set(list.filter((w) => !w.deleted_at).map((w) => w.domain.toLowerCase()));
+    return list.filter((w) => w.is_decommissioned && !activeDomains.has(w.domain.toLowerCase()));
+  }, [websites]);
   const needsClientActionSites = useMemo(
     () => (websites ?? []).filter((w) => w.needs_client_action),
     [websites]
