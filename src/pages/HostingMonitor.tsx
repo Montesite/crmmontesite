@@ -282,7 +282,13 @@ export default function HostingMonitor() {
     () => (websites ?? []).filter((w) => w.needs_client_action),
     [websites]
   );
-  const foraDoArCount = noHostingSites.length + needsClientActionSites.length;
+  // Site "sem hospedagem" já é um caso resolvido/conhecido - excluído de
+  // propósito da Hostinger (cancelamento, migração pro Wix do cliente etc.),
+  // com backup guardado. Não é algo que precise de ação HOJE, ao contrário de
+  // needs_client_action (DNS quebrado, domínio vencendo). Por isso não entra
+  // na contagem vermelha da aba "Fora do ar" - só o que realmente precisa de
+  // atenção conta aqui.
+  const foraDoArCount = needsClientActionSites.length;
 
   // Domínios com data de expiração conhecida (via RDAP do registro.br, ver
   // domain-expiry-sync) que vencem dentro de 60 dias e ainda não venceram -
@@ -428,14 +434,14 @@ export default function HostingMonitor() {
             </CardContent>
           </Card>
 
-          <Card className="shadow-sm border-red-500/30">
+          <Card className="shadow-sm">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium flex items-center justify-between">
                 <span className="flex items-center gap-1.5">
-                  <AlertTriangle className="h-4 w-4 text-red-600" />
-                  Sem hospedagem
+                  <XCircle className="h-4 w-4 text-muted-foreground" />
+                  Excluídos
                 </span>
-                <Badge variant="outline" className="gap-1 text-red-600 border-red-500/30 bg-red-500/10">
+                <Badge variant="outline" className="gap-1 text-muted-foreground">
                   <Github className="h-3 w-3" />
                   Backup no GitHub
                 </Badge>
@@ -444,12 +450,13 @@ export default function HostingMonitor() {
             <CardContent className="space-y-3">
               <div className="flex items-center justify-between text-sm">
                 <span className="flex items-center gap-1 text-muted-foreground">
-                  <Globe className="h-3.5 w-3.5" /> Sites sem hospedagem
+                  <Globe className="h-3.5 w-3.5" /> Sites excluídos
                 </span>
                 <span className="font-medium">{noHostingSites.length}</span>
               </div>
               <p className="text-xs text-muted-foreground">
-                Saíram da Hostinger e não foram pra VPS — domínio fora do ar, só existe backup do código no GitHub.
+                Saíram da Hostinger e não foram pra VPS — cancelamento ou outro motivo conhecido, só existe backup
+                do código no GitHub. Não precisa de ação.
               </p>
             </CardContent>
           </Card>
@@ -560,7 +567,7 @@ export default function HostingMonitor() {
                         <SelectItem value="h5g">Agency Growth</SelectItem>
                         <SelectItem value="cloudlinux">Cloud Professional</SelectItem>
                         <SelectItem value="vps">VPS (Hestia)</SelectItem>
-                        <SelectItem value="no_hosting">Sem hospedagem</SelectItem>
+                        <SelectItem value="no_hosting">Excluído</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -581,7 +588,7 @@ export default function HostingMonitor() {
                         <SelectItem value="all">Todos</SelectItem>
                         <SelectItem value="active">Ativo (Hostinger)</SelectItem>
                         <SelectItem value="vps">Migrado p/ VPS</SelectItem>
-                        <SelectItem value="no_hosting">Sem hospedagem</SelectItem>
+                        <SelectItem value="no_hosting">Excluído</SelectItem>
                         <SelectItem value="offline">Fora do ar</SelectItem>
                         <SelectItem value="placeholder">Placeholder</SelectItem>
                       </SelectContent>
@@ -671,9 +678,9 @@ export default function HostingMonitor() {
                           <TableCell className="font-medium">{site.domain}</TableCell>
                           <TableCell>
                             {site.is_decommissioned ? (
-                              <Badge variant="outline" className="gap-1 text-red-600 border-red-500/30 bg-red-500/10">
-                                <AlertTriangle className="h-3 w-3" />
-                                Sem hospedagem
+                              <Badge variant="outline" className="gap-1 text-muted-foreground border-muted-foreground/30 bg-muted">
+                                <XCircle className="h-3 w-3" />
+                                Excluído
                               </Badge>
                             ) : site.deleted_at ? (
                               <Badge variant="outline" className="gap-1 text-amber-600 border-amber-500/30 bg-amber-500/10">
@@ -697,7 +704,10 @@ export default function HostingMonitor() {
                           </TableCell>
                           <TableCell>
                             {site.is_decommissioned ? (
-                              <Badge className="bg-red-600">Sem hospedagem</Badge>
+                              <Badge variant="secondary" className="gap-1">
+                                <XCircle className="h-3 w-3" />
+                                Excluído
+                              </Badge>
                             ) : site.deleted_at ? (
                               <Badge className="bg-amber-500">Migrado p/ VPS</Badge>
                             ) : site.panel_state === "offline" ? (
@@ -880,15 +890,16 @@ export default function HostingMonitor() {
               </CardContent>
             </Card>
 
-            <Card className="border-red-500/30">
+            <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium flex items-center gap-1.5 text-red-600">
-                  <AlertTriangle className="h-4 w-4" />
-                  Sites sem hospedagem ({noHostingSites.length})
+                <CardTitle className="text-sm font-medium flex items-center gap-1.5 text-muted-foreground">
+                  <XCircle className="h-4 w-4" />
+                  Sites excluídos ({noHostingSites.length})
                 </CardTitle>
                 <p className="text-xs text-muted-foreground">
-                  Saíram da Hostinger e da VPS por cancelamento do serviço ou outro motivo — domínio fora do ar,
-                  só existe backup local. Vincule a um projeto pra manter o histórico.
+                  Caso já resolvido/conhecido: saíram da Hostinger e da VPS por cancelamento do serviço, migração
+                  do cliente pra outro provedor, ou outro motivo — só existe backup local. Não conta na contagem de
+                  "Fora do ar" porque não precisa de nenhuma ação agora. Vincule a um projeto pra manter o histórico.
                 </p>
               </CardHeader>
               <CardContent className="space-y-1">
