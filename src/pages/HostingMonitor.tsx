@@ -287,13 +287,19 @@ export default function HostingMonitor() {
   // Domínios com data de expiração conhecida (via RDAP do registro.br, ver
   // domain-expiry-sync) que vencem dentro de 60 dias e ainda não venceram -
   // os já vencidos aparecem em "Fora do ar", aqui é só o aviso prévio pra dar
-  // tempo de cobrar o cliente antes do domínio cair de vez.
+  // tempo de cobrar o cliente antes do domínio cair de vez. Só entram os
+  // domínios EXTERNOS (domain_registered_by_us === false, cruzado contra o
+  // portfólio da nossa própria conta Hostinger) - o que a gente mesmo compra
+  // fica com renovação automática habilitada por política e só é desativada
+  // no processo de cancelamento do cliente, então não tem por que alertar.
+  // Domínio ainda não classificado (null) fica de fora até o próximo ciclo
+  // do domain-expiry-sync, pra não arriscar mostrar um domínio nosso à toa.
   const expiringSoonSites = useMemo(() => {
     const list = websites ?? [];
     const SIXTY_DAYS_MS = 60 * 24 * 60 * 60 * 1000;
     return list
       .filter((w) => {
-        if (!w.domain_expires_at || w.is_decommissioned) return false;
+        if (!w.domain_expires_at || w.is_decommissioned || w.domain_registered_by_us !== false) return false;
         const msUntil = new Date(w.domain_expires_at).getTime() - Date.now();
         return msUntil > 0 && msUntil <= SIXTY_DAYS_MS;
       })
@@ -946,10 +952,11 @@ export default function HostingMonitor() {
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Data de vencimento consultada direto no registro.br (RDAP), reconferida por rodízio ao longo das
-                  semanas. Muitos desses domínios são registrados pelo próprio cliente (fora da nossa conta
-                  Hostinger) — só ele consegue renovar, então o alerta aqui é pra entrar em contato a tempo de
-                  cobrar o pagamento antes do domínio cair.
+                  Só domínios externos: registrados pelo próprio cliente (em outro registrador, ou numa conta
+                  Hostinger separada da nossa) — a gente não controla a renovação deles, só a hospedagem. Domínio
+                  que compramos na nossa própria conta Hostinger fica de fora daqui, porque já tem renovação
+                  automática habilitada por política. Data consultada direto no registro.br (RDAP), reconferida por
+                  rodízio ao longo das semanas.
                 </p>
               </CardHeader>
               <CardContent className="space-y-1">

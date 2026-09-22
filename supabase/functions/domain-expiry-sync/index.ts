@@ -25,9 +25,51 @@ const FETCH_TIMEOUT_MS = 8000;
 const THROTTLE_MS = 400;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const HOSTINGER_API_BASE = 'https://developers.hostinger.com/api';
+
 interface HostingWebsiteRow {
   id: string;
   domain: string;
+}
+
+// Domínio comprado/registrado por nós na nossa própria conta Hostinger tem
+// renovação automática habilitada por política (só desativamos no processo
+// de cancelamento do cliente, que já marca is_decommissioned) - não faz
+// sentido alertar "vencendo" pra esses. Só interessa avisar sobre domínio
+// externo: o cliente registrou em outro lugar (ou numa conta Hostinger
+// separada da nossa) e só aponta a hospedagem pra gente - aí a renovação
+// depende só dele. GET /domains/v1/portfolio lista todo domínio da NOSSA
+// conta; cruzar contra isso é o único jeito confiável de saber "é nosso" -
+// nameservers sozinhos não bastam, porque uma conta Hostinger de terceiro
+// também usa nameservers no padrão ns1/ns2.dns-parking.com.
+// Timeout maior que FETCH_TIMEOUT_MS de propósito: essa é uma chamada única
+// por invocação (não por domínio) que devolve o portfólio inteiro da conta
+// (~540 domínios) - achado rodando pela primeira vez que 8s não é suficiente
+// (deu AbortError/timeout), 20s resolveu.
+const PORTFOLIO_FETCH_TIMEOUT_MS = 20000;
+
+async function fetchOwnDomainPortfolio(token: string): Promise<Set<string> | null> {
+  try {
+    const res = await fetchWithTimeout(
+      `${HOSTINGER_API_BASE}/domains/v1/portfolio`,
+      { headers: { Authorization: `Bearer ${token}` } },
+      PORTFOLIO_FETCH_TIMEOUT_MS
+    );
+    if (!res.ok) {
+      console.error(`Falha ao buscar portfólio de domínios da Hostinger: HTTP ${res.status}`);
+      return null;
+    }
+    const data = await res.json();
+    const list = Array.isArray(data) ? data : [];
+    return new Set(
+      list
+        .map((d: { domain?: string | null }) => d.domain?.toLowerCase().trim())
+        .filter((d): d is string => !!d)
+    );
+  } catch (e) {
+    console.error('Falha ao buscar portfólio de domínios da Hostinger:', e);
+    return null;
+  }
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
@@ -128,6 +170,9 @@ serve(async (req) => {
       });
     }
 
+    const hostingerToken = Deno.env.get('HOSTINGER_API_TOKEN');
+    const ownPortfolio = hostingerToken ? await fetchOwnDomainPortfolio(hostingerToken) : null;
+
     // Só domínios .br (RDAP público que temos hoje), ativos (nem sem
     // hospedagem nem placeholder interno) - o lote mais antigo primeiro.
     const { data: sites, error: sitesError } = await supabase
@@ -165,15 +210,19 @@ serve(async (req) => {
       ) {
         expiringSoon += 1;
       }
-      await supabase
-        .from('hosting_websites')
-        .update({
-          domain_registry_status: registry.status,
-          domain_expires_at: registry.expiresAt,
-          domain_nameservers: registry.nameservers,
-          domain_checked_at: now,
-        })
-        .eq('id', site.id);
+      const apex = getBrApexDomain(site.domain);
+      const update: Record<string, unknown> = {
+        domain_registry_status: registry.status,
+        domain_expires_at: registry.expiresAt,
+        domain_nameservers: registry.nameservers,
+        domain_checked_at: now,
+      };
+      // Sem portfólio (token ausente ou a chamada falhou) não sobrescreve o
+      // que já sabíamos sobre ser nosso ou não - fica com o valor anterior.
+      if (ownPortfolio && apex) {
+        update.domain_registered_by_us = ownPortfolio.has(apex);
+      }
+      await supabase.from('hosting_websites').update(update).eq('id', site.id);
     });
 
     return new Response(
@@ -185,6 +234,7 @@ serve(async (req) => {
         expiring_soon_60d: expiringSoon,
         not_registered: notRegistered,
         failed,
+        own_portfolio_size: ownPortfolio?.size ?? null,
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

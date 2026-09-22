@@ -247,6 +247,7 @@ export type Database = {
           domain_checked_at: string | null
           domain_expires_at: string | null
           domain_nameservers: string | null
+          domain_registered_by_us: boolean | null
           domain_registry_status: string | null
           external_uid: string | null
           first_seen_at: string
@@ -274,6 +275,7 @@ export type Database = {
           domain_checked_at?: string | null
           domain_expires_at?: string | null
           domain_nameservers?: string | null
+          domain_registered_by_us?: boolean | null
           domain_registry_status?: string | null
           external_uid?: string | null
           first_seen_at?: string
@@ -301,6 +303,7 @@ export type Database = {
           domain_checked_at?: string | null
           domain_expires_at?: string | null
           domain_nameservers?: string | null
+          domain_registered_by_us?: boolean | null
           domain_registry_status?: string | null
           external_uid?: string | null
           first_seen_at?: string
