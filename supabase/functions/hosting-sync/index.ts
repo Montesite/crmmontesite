@@ -44,114 +44,35 @@ function normalizeDomain(raw: string): string {
     .replace(/[/#?].*$/, '');
 }
 
-// O painel AdminBolt da VPS serve só o certificado da própria (ZeroSSL RSA DV
-// SSL CA 2), sem a cadeia intermediária - Deno recusa a conexão por padrão
-// ("unable to verify the first certificate"). Fornece explicitamente o
-// intermediário e a raiz da Sectigo (baixados de crt.sectigo.com via AIA do
-// certificado da própria VPS) pra completar a cadeia; não desliga verificação
-// nenhuma, só supre o elo que o servidor deveria estar enviando e não envia.
-const ZEROSSL_INTERMEDIATE_PEM = `-----BEGIN CERTIFICATE-----
-MIIGITCCBAmgAwIBAgIRANCpCCVfjlDl8zltERRwKjcwDQYJKoZIhvcNAQEMBQAw
-XzELMAkGA1UEBhMCR0IxGDAWBgNVBAoTD1NlY3RpZ28gTGltaXRlZDE2MDQGA1UE
-AxMtU2VjdGlnbyBQdWJsaWMgU2VydmVyIEF1dGhlbnRpY2F0aW9uIFJvb3QgUjQ2
-MB4XDTI1MDkyNDAwMDAwMFoXDTM1MDkyMzIzNTk1OVowRjELMAkGA1UEBhMCQVQx
-FTATBgNVBAoTDFplcm9TU0wgR21iSDEgMB4GA1UEAxMXWmVyb1NTTCBSU0EgRFYg
-U1NMIENBIDIwggGiMA0GCSqGSIb3DQEBAQUAA4IBjwAwggGKAoIBgQCnXX3Qm/G+
-ujylvYIkhJ53ZZ7XM03vXY03sCnO9VWjwMsV0qCQMlvhuRiJwrm4M5jgGehxIiCR
-1qT0AyL2rHTWJR07vjJzuNmp7uoKu3HKwixBk9QuXD5aliO8/EDbzdZDcG/Hm5pC
-mOeusLtds/UE/Iq24nw5WpcgZE5Ly+F/yCYDuEa7hXLJAPM5SecJIblG1OQ3ukMl
-HHNBbDxBpGWTyDudd0DTed0NTgCPs1t8RZPhW9Gt/8nDwFX0pQ4eHfPEB8c6eNl2
-sRr2Afp1YErakR+53yEX2SXc2Kz0fbTlUc+To0ULGcJiWNyZwj//DTZ+M4xxsT2T
-qjQ4Xfvm2EUTymrXDrh1Pm/wkBouu860c6eeQfNlKlccUyHOSeKCtPIWreMvH3Be
-Ydeu3DwI8lefn/VUhSB2Bbz7hX3qz3oMmtSTmWhTnobyKlx1L2b/oloaqpy1cBc/
-QiLRSOptYGPjZtX0pRrTVKQXeP2rPUk0y5q/40WRpugSlHCX6aceWnsCAwEAAaOC
-AW8wggFrMB8GA1UdIwQYMBaAFFZzWGSV+ZIasBIqBGJ5oUAViCFJMB0GA1UdDgQW
-BBRLvvp2hCNEBLnOvjFv6fUyBv8MVzAOBgNVHQ8BAf8EBAMCAYYwEgYDVR0TAQH/
-BAgwBgEB/wIBADATBgNVHSUEDDAKBggrBgEFBQcDATATBgNVHSAEDDAKMAgGBmeB
-DAECATBUBgNVHR8ETTBLMEmgR6BFhkNodHRwOi8vY3JsLnNlY3RpZ28uY29tL1Nl
-Y3RpZ29QdWJsaWNTZXJ2ZXJBdXRoZW50aWNhdGlvblJvb3RSNDYuY3JsMIGEBggr
-BgEFBQcBAQR4MHYwTwYIKwYBBQUHMAKGQ2h0dHA6Ly9jcnQuc2VjdGlnby5jb20v
-U2VjdGlnb1B1YmxpY1NlcnZlckF1dGhlbnRpY2F0aW9uUm9vdFI0Ni5wN2MwIwYI
-KwYBBQUHMAGGF2h0dHA6Ly9vY3NwLnNlY3RpZ28uY29tMA0GCSqGSIb3DQEBDAUA
-A4ICAQCJ/3v2/vdexHsdVyXL9aCTQE01YXl23866TVM/LgRpRW+kneZXXZxP0hy4
-GnvlqUcxTq97B6qPdQcQxQxpGne7CRn0nWauzqieMcJzYl3fDC2Q/ANyPhyrbwCI
-zx9EsRrgfjvuJCaUMtlfYpKqBUYiPOCPAN0HdrLD5hU6oV1tvWVsUzTA43skC3uH
-wQM5YPIk0NDJFw3NhQPOIOwbq09T+SYSEZvsJ3t4sA4H3gh03RETNaAwTcTNS/+u
-1tAeQUZZmKQyLWYLyoxvbISp/MFr9xqhDqrpAurYVNeiLJ5+4/WZPml20yNZjcxV
-KKqRYdEurl8rmI2toCnCDWiEcTDvoYGtz60eYIt7VJID4DrCjTxAWTWh2T5ag2pK
-ryNJGt8BFGLtjeD774SxAFn5MGYBVvEK4LXmCjVX78pb6/0Dceo71dlQUK68yftb
-+yTeyoqjwgk2L8vNSrkj6UTkvvqXSONFuVU7bvC0O/9bi5MXBv7QUivMNxDsTtaT
-IZO7PsSCRmLraQM2EPBgbNL9lRSEYi4Hj+NicT/e87pbhv88k0oec9xGcnkcvZpN
-sJBz78mkZfeFIIjh02e2y9ke/Fqw1FbdhHtU2myaFnX0sRyGLmI/vzXSwyvT+Kxl
-Wx8FV64z2PBdwd0vXRaAMXomGC0M1vQa5fBDn4dimzewsSiphQ==
------END CERTIFICATE-----`;
-
-const SECTIGO_ROOT_PEM = `-----BEGIN CERTIFICATE-----
-MIIFijCCA3KgAwIBAgIQdY39i658BwD6qSWn4cetFDANBgkqhkiG9w0BAQwFADBf
-MQswCQYDVQQGEwJHQjEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMTYwNAYDVQQD
-Ey1TZWN0aWdvIFB1YmxpYyBTZXJ2ZXIgQXV0aGVudGljYXRpb24gUm9vdCBSNDYw
-HhcNMjEwMzIyMDAwMDAwWhcNNDYwMzIxMjM1OTU5WjBfMQswCQYDVQQGEwJHQjEY
-MBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMTYwNAYDVQQDEy1TZWN0aWdvIFB1Ymxp
-YyBTZXJ2ZXIgQXV0aGVudGljYXRpb24gUm9vdCBSNDYwggIiMA0GCSqGSIb3DQEB
-AQUAA4ICDwAwggIKAoICAQCTvtU2UnXYASOgHEdCSe5jtrch/cSV1UgrJnwUUxDa
-ef0rty2k1Cz66jLdScK5vQ9IPXtamFSvnl0xdE8H/FAh3aTPaE8bEmNtJZlMKpnz
-SDBh+oF8HqcIStw+KxwfGExxqjWMrfhu6DtK2eWUAtaJhBOqbchPM8xQljeSM9xf
-iOefVNlI8JhD1mb9nxc4Q8UBUQvX4yMPFF1bFOdLvt30yNoDN9HWOaEhUTCDsG3X
-ME6WW5HwcCSrv0WBZEMNvSE6Lzzpng3LILVCJ8zab5vuZDCQOc2TZYEhMbUjUDM3
-IuM47fgxMMxF/mL50V0yeUKH32rMVhlATc6qu/m1dkmU8Sf4kaWD5QazYw6A3OAS
-VYCmO2a0OYctyPDQ0RTp5A1NDvZdV3LFOxxHVp3i1fuBYYzMTYCQNFu31xR13NgE
-SJ/AwSiItOkcyqex8Va3e0lMWeUgFaiEAin6OJRpmkkGj80feRQXEgyDet4fsZfu
-+Zd4KKTIRJLpfSYFplhym3kT2BFfrsU4YjRosoYwjviQYZ4ybPUHNs2iTG7sijbt
-8uaZFURww3y8nDnAtOFr94MlI1fZEoDlSfB1D++N6xybVCi0ITz8fAr/73trdf+L
-HaAZBav6+CuBQug4urv7qv094PPK306Xlynt8xhW6aWWrL3DkJiy4Pmi1KZHQ3xt
-zwIDAQABo0IwQDAdBgNVHQ4EFgQUVnNYZJX5khqwEioEYnmhQBWIIUkwDgYDVR0P
-AQH/BAQDAgGGMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZIhvcNAQEMBQADggIBAC9c
-mTz8Bl6MlC5w6tIyMY208FHVvArzZJ8HXtXBc2hkeqK5Duj5XYUtqDdFqij0lgVQ
-YKlJfp/imTYpE0RHap1VIDzYm/EDMrraQKFz6oOht0SmDpkBm+S8f74TlH7Kph52
-gDY9hAaLMyZlbcp+nv4fjFg4exqDsQ+8FxG75gbMY/qB8oFM2gsQa6H61SilzwZA
-Fv97fRheORKkU55+MkIQpiGRqRxOF3yEvJ+M0ejf5lG5Nkc/kLnHvALcWxxPDkjB
-JYOcCj+esQMzEhonrPcibCTRAUH4WAP+JWgiH5paPHxsnnVI84HxZmduTILA7rpX
-DhjvLpr3Etiga+kFpaHpaPi8TD8SHkXoUsCjvxInebnMMTzD9joiFgOgyY9mpFui
-TdaBJQbpdqQACj7LzTWb4OE4y2BThihCQRxEV+ioratF4yUQvNs+ZUH7G6aXD+u5
-dHn5HrwdVw1Hr8Mvn4dGp+smWg9WY7ViYG4A++MnESLn/pmPNPW56MORcr3Ywx65
-LvKRRFHQV80MNNVIIb/bE/FmJUNS0nAiNs2fxBx1IK1jcmMGDw4nztJqDby1ORrp
-0XZ60Vzk50lJLVU3aPAaOpg+VBeHVOmmJ1CJeyAvP/+/oYtKR5j/K3tJPsMpRmAY
-QqszKbrAKbkTidOIijlBO8n9pu0f9GBj39ItVQGL
------END CERTIFICATE-----`;
-
-// Consulta a lista real de contas na VPS AdminBolt, pra saber se um site que
-// sumiu da Hostinger foi realmente migrado pra lá (deleted_at + ainda "vps")
-// ou se foi removido por outro motivo (deleted_at + is_decommissioned = true).
-// Sem isso não dava pra distinguir os dois casos - qualquer site que saísse
-// da Hostinger virava "Migrado p/ VPS" por padrão, estivesse ele lá ou não.
+// Consulta a lista real de domínios hospedados na VPS Hestia, pra saber se um
+// site que sumiu da Hostinger foi realmente migrado pra lá (deleted_at + ainda
+// "vps") ou se foi removido por outro motivo (deleted_at + is_decommissioned
+// = true). Sem isso não dava pra distinguir os dois casos - qualquer site que
+// saísse da Hostinger virava "Migrado p/ VPS" (ou "cancelado") por padrão,
+// dependendo do fallback, estivesse ele lá ou não.
 //
-// A VPS foi reinstalada em 2026-09-22 (AdminBolt trocado por HestiaCP, que
-// exigia licença paga) - o endpoint do AdminBolt não existe mais e nunca vai
-// responder de novo. Sem timeout aqui, o fetch ficava pendurado até o limite
-// de tempo da própria function (bem além dos 60-120s de qualquer chamador),
-// travando o hosting-sync inteiro - inclusive a reclassificação de sites que
-// não têm nada a ver com a VPS. Com o timeout, a chamada falha rápido e cai
-// no fallback (vpsDomains vazio) normalmente. TODO: trocar esse endpoint pelo
-// equivalente do HestiaCP assim que os sites forem recriados lá.
-async function fetchVpsDomains(apiUrl: string, apiKey: string, apiSecret: string): Promise<Set<string>> {
-  const client = Deno.createHttpClient({ caCerts: [ZEROSSL_INTERMEDIATE_PEM, SECTIGO_ROOT_PEM] });
+// A VPS antiga (AdminBolt) foi desligada em 2026-09-22 e substituída por
+// HestiaCP, que não tem API exposta pra internet (só 127.0.0.1:8083). Em vez
+// disso, um script + cron na própria VPS (/usr/local/bin/dump-vps-domains.sh)
+// publica a lista de domínios como JSON estático num caminho com token
+// aleatório embutido no vhost padrão da VPS (srv1988116.hstgr.cloud), servido
+// por HTTPS normal (Let's Encrypt) - não precisa de CA custom nem de headers
+// de autenticação, só GET simples com timeout.
+const VPS_DOMAINS_URL =
+  'https://srv1988116.hstgr.cloud/vps-domains-8d6ffe81132ac7351c44648f3f3d3becaa85f789d12ab908.json';
+
+async function fetchVpsDomains(): Promise<Set<string>> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
   try {
-    const res = await fetch(`${apiUrl}/api/hosting-accounts?per_page=200`, {
-      client,
-      signal: controller.signal,
-      headers: { 'X-API-Key': apiKey, 'X-API-Secret': apiSecret, Accept: 'application/json' },
-    });
+    const res = await fetch(VPS_DOMAINS_URL, { signal: controller.signal });
     if (!res.ok) {
-      throw new Error(`AdminBolt API /hosting-accounts -> HTTP ${res.status}`);
+      throw new Error(`VPS domains endpoint -> HTTP ${res.status}`);
     }
-    const data = await res.json();
-    const accounts: { domain: string }[] = Array.isArray(data) ? data : data.data ?? [];
-    return new Set(accounts.map((a) => a.domain.toLowerCase()));
+    const domains: string[] = await res.json();
+    return new Set(domains.map((d) => d.toLowerCase()));
   } finally {
     clearTimeout(timer);
-    client.close();
   }
 }
 
@@ -239,21 +160,11 @@ serve(async (req) => {
         .map((p) => [normalizeDomain(p.domain!), p.id])
     );
 
-    // Opcional: se os secrets do AdminBolt não estiverem configurados, a
-    // classificação cai de volta pro comportamento antigo (fica "vps" por
-    // padrão) - registra no log pra ficar visível que a checagem foi pulada.
-    const adminboltUrl = Deno.env.get('ADMINBOLT_API_URL');
-    const adminboltKey = Deno.env.get('ADMINBOLT_API_KEY');
-    const adminboltSecret = Deno.env.get('ADMINBOLT_API_SECRET');
     let vpsDomains = new Set<string>();
-    if (adminboltUrl && adminboltKey && adminboltSecret) {
-      try {
-        vpsDomains = await fetchVpsDomains(adminboltUrl, adminboltKey, adminboltSecret);
-      } catch (e) {
-        console.error('Falha ao buscar contas da VPS AdminBolt - sites removidos da Hostinger não serão reclassificados corretamente nesta execução:', e);
-      }
-    } else {
-      console.error('ADMINBOLT_API_URL/KEY/SECRET não configurados - pulando checagem de VPS.');
+    try {
+      vpsDomains = await fetchVpsDomains();
+    } catch (e) {
+      console.error('Falha ao buscar domínios da VPS Hestia - sites removidos da Hostinger não serão reclassificados corretamente nesta execução:', e);
     }
 
     const createdEvents: { domain: string; order_id: number }[] = [];
@@ -331,18 +242,17 @@ serve(async (req) => {
         .map(([, row]) => row.domain);
 
       if (domainsGoneMissing.length > 0) {
-        // O AdminBolt saiu do ar de vez em 2026-09-22 (ver comentário em
-        // fetchVpsDomains) - vpsDomains fica sempre vazio agora, então
-        // vpsCheckAvailable é sempre false na prática. Com a migração pra
-        // VPS já concluída (11 sites migrados naquele mesmo dia, ver
-        // MIGRACOES.md), todo domínio que some da Hostinger hoje em diante é
-        // overwhelmingly um cancelamento, não uma nova migração - por isso o
-        // fallback (sem checagem de VPS disponível) agora é "decommissioned",
-        // não "migrado pra VPS". Antes disso, esse fallback tratava tudo como
-        // "migrado pra VPS" por padrão e chegou a classificar ~30 sites
-        // deletados manualmente da Hostinger em 2026-09-22 (achado auditando
-        // o pedido do usuário sobre os domínios lelepepe que ele excluiu) como
-        // "Migrado p/ VPS" quando na verdade foram apenas cancelados.
+        // Se por algum motivo o endpoint de domínios da VPS (ver
+        // fetchVpsDomains) não responder nesta execução, vpsDomains fica
+        // vazio e não dá pra saber se um domínio sumido foi migrado ou
+        // cancelado - o fallback então assume "decommissioned" (cancelado),
+        // nunca "migrado pra VPS" sem confirmação. Motivo: esse fallback já
+        // tratou tudo como "migrado pra VPS" por padrão no passado e chegou a
+        // classificar ~30 sites deletados manualmente da Hostinger em
+        // 2026-09-22 (achado auditando o pedido do usuário sobre os domínios
+        // lelepepe que ele excluiu) como "Migrado p/ VPS" quando na verdade
+        // foram apenas cancelados. Prefere errar pra "cancelado" (que o
+        // usuário revisa manualmente) a inventar uma migração que não houve.
         const vpsCheckAvailable = vpsDomains.size > 0;
         const migratedToVps = vpsCheckAvailable
           ? domainsGoneMissing.filter((d) => vpsDomains.has(d.toLowerCase()))
