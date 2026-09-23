@@ -173,6 +173,75 @@ function ExpiryBadge({ days }: { days: number }) {
   );
 }
 
+function PaginationFooter({
+  currentPage,
+  totalPages,
+  pageSize,
+  totalItems,
+  onPageChange,
+  onPageSizeChange,
+}: {
+  currentPage: number;
+  totalPages: number;
+  pageSize: number;
+  totalItems: number;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (size: number) => void;
+}) {
+  if (totalItems === 0) return null;
+  return (
+    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pt-4 border-t mt-4">
+      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+        <span>
+          Mostrando {(currentPage - 1) * pageSize + 1}–
+          {Math.min(currentPage * pageSize, totalItems)} de {totalItems}
+        </span>
+        <div className="flex items-center gap-1.5">
+          <span>por página:</span>
+          <Select
+            value={pageSize.toString()}
+            onValueChange={(v) => onPageSizeChange(parseInt(v))}
+          >
+            <SelectTrigger className="h-7 w-16 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PAGE_SIZE_OPTIONS.map((size) => (
+                <SelectItem key={size} value={size.toString()}>
+                  {size}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 px-2"
+          disabled={currentPage <= 1}
+          onClick={() => onPageChange(currentPage - 1)}
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+        </Button>
+        <span className="text-xs text-muted-foreground">
+          Página {currentPage} de {totalPages}
+        </span>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 px-2"
+          disabled={currentPage >= totalPages}
+          onClick={() => onPageChange(currentPage + 1)}
+        >
+          <ChevronRight className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function timeAgo(date: string) {
   const diff = Date.now() - new Date(date).getTime();
   const minutes = Math.floor(diff / 60000);
@@ -198,6 +267,10 @@ export default function HostingMonitor() {
   const [openToDate, setOpenToDate] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
+  const [problemPage, setProblemPage] = useState(1);
+  const [problemPageSize, setProblemPageSize] = useState(25);
+  const [excludedPage, setExcludedPage] = useState(1);
+  const [excludedPageSize, setExcludedPageSize] = useState(25);
 
   const { data: plans, isLoading: loadingPlans } = useQuery({
     queryKey: ["hosting_plans"],
@@ -289,6 +362,20 @@ export default function HostingMonitor() {
   // na contagem vermelha da aba "Fora do ar" - só o que realmente precisa de
   // atenção conta aqui.
   const foraDoArCount = needsClientActionSites.length;
+
+  const problemTotalPages = Math.max(1, Math.ceil(needsClientActionSites.length / problemPageSize));
+  const problemCurrentPage = Math.min(problemPage, problemTotalPages);
+  const paginatedProblemSites = useMemo(
+    () => needsClientActionSites.slice((problemCurrentPage - 1) * problemPageSize, problemCurrentPage * problemPageSize),
+    [needsClientActionSites, problemCurrentPage, problemPageSize]
+  );
+
+  const excludedTotalPages = Math.max(1, Math.ceil(noHostingSites.length / excludedPageSize));
+  const excludedCurrentPage = Math.min(excludedPage, excludedTotalPages);
+  const paginatedExcludedSites = useMemo(
+    () => noHostingSites.slice((excludedCurrentPage - 1) * excludedPageSize, excludedCurrentPage * excludedPageSize),
+    [noHostingSites, excludedCurrentPage, excludedPageSize]
+  );
 
   // Domínios com data de expiração conhecida (via RDAP do registro.br, ver
   // domain-expiry-sync) que vencem dentro de 60 dias e ainda não venceram -
@@ -851,37 +938,50 @@ export default function HostingMonitor() {
               </CardHeader>
               <CardContent className="space-y-1">
                 {needsClientActionSites.length > 0 ? (
-                  needsClientActionSites.map((site) => (
-                    <div
-                      key={site.id}
-                      className="flex items-center justify-between gap-3 py-2 border-b last:border-0"
-                    >
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <p className="text-sm font-medium truncate">{site.domain}</p>
-                          <Badge variant="outline" className="text-amber-600 border-amber-500/30 bg-amber-500/10 shrink-0">
-                            Ação do cliente
-                          </Badge>
-                        </div>
-                        <div className="flex items-center gap-2 flex-wrap mt-0.5">
-                          {site.projects ? (
-                            <Link
-                              to={`/projeto/${site.projects.id}`}
-                              className="text-xs text-primary hover:underline"
-                            >
-                              {site.projects.client_name}
-                            </Link>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">Sem projeto vinculado</span>
+                  <>
+                    {paginatedProblemSites.map((site) => (
+                      <div
+                        key={site.id}
+                        className="flex items-center justify-between gap-3 py-2 border-b last:border-0"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-sm font-medium truncate">{site.domain}</p>
+                            <Badge variant="outline" className="text-amber-600 border-amber-500/30 bg-amber-500/10 shrink-0">
+                              Ação do cliente
+                            </Badge>
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                            {site.projects ? (
+                              <Link
+                                to={`/projeto/${site.projects.id}`}
+                                className="text-xs text-primary hover:underline"
+                              >
+                                {site.projects.client_name}
+                              </Link>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">Sem projeto vinculado</span>
+                            )}
+                          </div>
+                          {site.client_action_note && (
+                            <p className="text-xs text-muted-foreground mt-0.5">{site.client_action_note}</p>
                           )}
                         </div>
-                        {site.client_action_note && (
-                          <p className="text-xs text-muted-foreground mt-0.5">{site.client_action_note}</p>
-                        )}
+                        <WebsiteRowActions site={site} />
                       </div>
-                      <WebsiteRowActions site={site} />
-                    </div>
-                  ))
+                    ))}
+                    <PaginationFooter
+                      currentPage={problemCurrentPage}
+                      totalPages={problemTotalPages}
+                      pageSize={problemPageSize}
+                      totalItems={needsClientActionSites.length}
+                      onPageChange={setProblemPage}
+                      onPageSizeChange={(size) => {
+                        setProblemPageSize(size);
+                        setProblemPage(1);
+                      }}
+                    />
+                  </>
                 ) : (
                   <div className="text-center py-8 text-muted-foreground">
                     Nenhum domínio com problema de DNS detectado no momento.
@@ -904,42 +1004,55 @@ export default function HostingMonitor() {
               </CardHeader>
               <CardContent className="space-y-1">
                 {noHostingSites.length > 0 ? (
-                  noHostingSites.map((site) => (
-                    <div
-                      key={site.id}
-                      className="flex items-center justify-between gap-3 py-2 border-b last:border-0"
-                    >
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">{site.domain}</p>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {site.projects ? (
-                            <Link
-                              to={`/projeto/${site.projects.id}`}
-                              className="text-xs text-primary hover:underline"
-                            >
-                              {site.projects.client_name}
-                            </Link>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">Sem projeto vinculado</span>
-                          )}
-                          {(site.projects?.project_link || site.github_backup_url) && (
-                            <>
-                              <span className="text-xs text-muted-foreground">·</span>
-                              <a
-                                href={site.projects?.project_link || site.github_backup_url || undefined}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-xs text-muted-foreground hover:text-primary hover:underline flex items-center gap-1"
+                  <>
+                    {paginatedExcludedSites.map((site) => (
+                      <div
+                        key={site.id}
+                        className="flex items-center justify-between gap-3 py-2 border-b last:border-0"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate">{site.domain}</p>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {site.projects ? (
+                              <Link
+                                to={`/projeto/${site.projects.id}`}
+                                className="text-xs text-primary hover:underline"
                               >
-                                <Github className="h-3 w-3" /> Backup
-                              </a>
-                            </>
-                          )}
+                                {site.projects.client_name}
+                              </Link>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">Sem projeto vinculado</span>
+                            )}
+                            {(site.projects?.project_link || site.github_backup_url) && (
+                              <>
+                                <span className="text-xs text-muted-foreground">·</span>
+                                <a
+                                  href={site.projects?.project_link || site.github_backup_url || undefined}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-xs text-muted-foreground hover:text-primary hover:underline flex items-center gap-1"
+                                >
+                                  <Github className="h-3 w-3" /> Backup
+                                </a>
+                              </>
+                            )}
+                          </div>
                         </div>
+                        <WebsiteRowActions site={site} />
                       </div>
-                      <WebsiteRowActions site={site} />
-                    </div>
-                  ))
+                    ))}
+                    <PaginationFooter
+                      currentPage={excludedCurrentPage}
+                      totalPages={excludedTotalPages}
+                      pageSize={excludedPageSize}
+                      totalItems={noHostingSites.length}
+                      onPageChange={setExcludedPage}
+                      onPageSizeChange={(size) => {
+                        setExcludedPageSize(size);
+                        setExcludedPage(1);
+                      }}
+                    />
+                  </>
                 ) : (
                   <div className="text-center py-8 text-muted-foreground">
                     Nenhum site sem hospedagem no momento.
