@@ -353,8 +353,10 @@ export default function HostingMonitor() {
     const activeDomains = new Set(list.filter((w) => !w.deleted_at).map((w) => w.domain.toLowerCase()));
     return list.filter((w) => w.is_decommissioned && !activeDomains.has(w.domain.toLowerCase()));
   }, [websites]);
+  // Site sem hospedagem (is_decommissioned) já é caso encerrado e aparece em
+  // "Excluídos" - a flag de antes da exclusão não pode mantê-lo em "Fora do ar".
   const needsClientActionSites = useMemo(
-    () => (websites ?? []).filter((w) => w.needs_client_action),
+    () => (websites ?? []).filter((w) => w.needs_client_action && !w.is_decommissioned),
     [websites]
   );
   // Site "sem hospedagem" já é um caso resolvido/conhecido - excluído de
