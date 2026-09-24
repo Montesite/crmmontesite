@@ -21,11 +21,12 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { getFunctionErrorMessage } from "@/lib/functionError";
-import { MoreVertical, Link2, PowerOff, Power, Trash2, Globe2, Eraser, Github } from "lucide-react";
+import { MoreVertical, Link2, PowerOff, Power, Trash2, Globe2, Eraser, Github, AlertTriangle, Loader2 } from "lucide-react";
 import { DomainRenewalDialog } from "./DomainRenewalDialog";
 
 interface WebsiteRow {
@@ -50,6 +51,7 @@ export function WebsiteRowActions({ site }: { site: WebsiteRow }) {
   const [githubOpen, setGithubOpen] = useState(false);
   const [githubUrl, setGithubUrl] = useState("");
   const [search, setSearch] = useState("");
+  const [dnsLossConfirmed, setDnsLossConfirmed] = useState(false);
 
   // Sem projeto vinculado, o link fica guardado no próprio site (staging).
   // Com projeto vinculado, o site "conversa" com o campo Link do Projeto
@@ -165,10 +167,34 @@ export function WebsiteRowActions({ site }: { site: WebsiteRow }) {
     },
   });
 
+  // Antes de excluir, confere se a DNS do domínio vai junto com o site (domínio
+  // fora do portfólio da Hostinger) - foi assim que MX de clientes se perderam
+  // nas migrações pra VPS de 2026-09-17/22.
+  const { data: dnsRisk, isLoading: loadingDnsRisk, error: dnsRiskError } = useQuery({
+    queryKey: ["hosting-delete-precheck", site.id],
+    queryFn: async () => {
+      const response = await supabase.functions.invoke("hosting-website-action", {
+        body: { website_id: site.id, action: "delete_precheck" },
+      });
+      if (response.error) {
+        throw new Error(await getFunctionErrorMessage(response.error, "Não foi possível checar a DNS do domínio."));
+      }
+      return response.data as {
+        in_portfolio: boolean;
+        at_risk: boolean;
+        zone_records: { name: string; type: string; content: string }[];
+        mail_records: { name: string; type: string; content: string }[];
+      };
+    },
+    enabled: deleteOpen,
+    staleTime: 0,
+  });
+  const deleteBlocked = loadingDnsRisk || !!dnsRiskError || (!!dnsRisk?.at_risk && !dnsLossConfirmed);
+
   const actionMutation = useMutation({
     mutationFn: async (action: "deactivate" | "reactivate" | "delete" | "clear_cache") => {
       const response = await supabase.functions.invoke("hosting-website-action", {
-        body: { website_id: site.id, action },
+        body: { website_id: site.id, action, confirm_dns_loss: action === "delete" ? dnsLossConfirmed : undefined },
       });
       if (response.error) {
         throw new Error(await getFunctionErrorMessage(response.error, "Não foi possível concluir a ação."));
@@ -350,7 +376,13 @@ export function WebsiteRowActions({ site }: { site: WebsiteRow }) {
       </AlertDialog>
 
       {/* Excluir site */}
-      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+      <AlertDialog
+        open={deleteOpen}
+        onOpenChange={(open) => {
+          setDeleteOpen(open);
+          if (!open) setDnsLossConfirmed(false);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Excluir site</AlertDialogTitle>
@@ -359,6 +391,52 @@ export function WebsiteRowActions({ site }: { site: WebsiteRow }) {
               todos os arquivos e bancos de dados do site na Hostinger.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {loadingDnsRisk && (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Checando a DNS do domínio...
+            </p>
+          )}
+          {dnsRiskError && (
+            <p className="text-sm text-red-600">
+              {dnsRiskError instanceof Error ? dnsRiskError.message : "Não foi possível checar a DNS do domínio."} A
+              exclusão fica bloqueada até a checagem funcionar.
+            </p>
+          )}
+          {dnsRisk?.at_risk && (
+            <div className="space-y-2 rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm">
+              <p className="flex items-start gap-2 font-medium text-red-700 dark:text-red-400">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />A DNS de {site.domain} será apagada junto com o site
+              </p>
+              <p className="text-muted-foreground">
+                O domínio não está no portfólio de Domínios da Hostinger, então a zona DNS ({dnsRisk.zone_records.length}{" "}
+                registro(s)) só existe por causa deste site. Se o site já foi migrado (ex.: pra VPS), o domínio sai do ar
+                {dnsRisk.mail_records.length > 0 ? " e o e-mail do cliente para de funcionar" : ""}.
+              </p>
+              {dnsRisk.mail_records.length > 0 && (
+                <div>
+                  <p className="font-medium">Registros de e-mail que serão perdidos:</p>
+                  <ul className="mt-1 max-h-32 overflow-y-auto font-mono text-xs">
+                    {dnsRisk.mail_records.map((r, i) => (
+                      <li key={i}>
+                        {r.name} {r.type} {r.content}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <label className="flex items-start gap-2 pt-1">
+                <Checkbox
+                  checked={dnsLossConfirmed}
+                  onCheckedChange={(checked) => setDnsLossConfirmed(checked === true)}
+                  className="mt-0.5"
+                />
+                <span>
+                  Já recriei esses registros em outro lugar (DNS do cliente ou portfólio da Hostinger) ou o domínio não
+                  será mais usado.
+                </span>
+              </label>
+            </div>
+          )}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={actionMutation.isPending}>Cancelar</AlertDialogCancel>
             <AlertDialogAction
@@ -367,7 +445,7 @@ export function WebsiteRowActions({ site }: { site: WebsiteRow }) {
                 e.preventDefault();
                 actionMutation.mutate("delete");
               }}
-              disabled={actionMutation.isPending}
+              disabled={actionMutation.isPending || deleteBlocked}
             >
               {actionMutation.isPending ? "Excluindo..." : "Excluir site"}
             </AlertDialogAction>

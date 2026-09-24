@@ -29,6 +29,65 @@ async function hostingerFetch(
   return text ? JSON.parse(text) : null;
 }
 
+interface DnsRecord {
+  name: string;
+  type: string;
+  content: string;
+}
+
+interface DnsRiskReport {
+  in_portfolio: boolean;
+  zone_records: DnsRecord[];
+  mail_records: DnsRecord[];
+  at_risk: boolean;
+}
+
+const MAIL_RECORD_NAME = /^(mail|smtp|imap|pop3?|webmail|autodiscover|autoconfig|_autodiscover\._tcp|_dmarc)$|_domainkey$/i;
+
+function isMailRecord(r: DnsRecord): boolean {
+  if (r.type === 'MX') return true;
+  if (r.type === 'TXT' && /v=spf1/i.test(r.content)) return true;
+  return MAIL_RECORD_NAME.test(r.name);
+}
+
+// Achado em 2026-09-24: ao excluir da Hostinger sites já migrados pra VPS, 15
+// domínios perderam a DNS inteira (inclusive o MX que apontava pro e-mail do
+// cliente na UOL, Hostinger do cliente etc.) - quando o domínio não está no
+// portfólio de Domínios da nossa conta, a zona DNS existe só como parte do
+// site hospedado e é apagada junto com ele. Os que estão no portfólio mantêm
+// a zona. Esse relatório é mostrado antes de excluir pra ninguém apagar a DNS
+// de um cliente sem perceber.
+async function buildDnsRiskReport(domain: string, token: string): Promise<DnsRiskReport> {
+  const host = domain.toLowerCase().replace(/^www\./, '');
+  const portfolio = await hostingerFetch('/domains/v1/portfolio', token);
+  const inPortfolio = (Array.isArray(portfolio) ? portfolio : portfolio?.data ?? []).some(
+    (d: { domain?: string }) => {
+      const owned = (d.domain ?? '').toLowerCase();
+      return !!owned && (host === owned || host.endsWith(`.${owned}`));
+    }
+  );
+
+  let zone: { name: string; type: string; records: { content: string }[] }[] = [];
+  try {
+    zone = (await hostingerFetch(`/dns/v1/zones/${encodeURIComponent(host)}`, token)) ?? [];
+  } catch (e) {
+    // 404 = domínio sem zona na nossa conta (DNS fica em outro provedor) -
+    // excluir o site não mexe em DNS nenhuma, então não há risco.
+    if (!(e instanceof Error && /HTTP 404/.test(e.message))) throw e;
+  }
+  const zoneRecords: DnsRecord[] = zone.flatMap((z) =>
+    (z.records ?? []).map((r) => ({ name: z.name, type: z.type, content: r.content }))
+  );
+  const mailRecords = zoneRecords.filter(isMailRecord);
+
+  return {
+    in_portfolio: inPortfolio,
+    zone_records: zoneRecords,
+    mail_records: mailRecords,
+    at_risk: !inPortfolio && zoneRecords.length > 0,
+  };
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -52,8 +111,8 @@ serve(async (req) => {
       );
     }
 
-    const { website_id, action } = await req.json();
-    if (!website_id || !['deactivate', 'reactivate', 'delete', 'clear_cache'].includes(action)) {
+    const { website_id, action, confirm_dns_loss } = await req.json();
+    if (!website_id || !['deactivate', 'reactivate', 'delete', 'delete_precheck', 'clear_cache'].includes(action)) {
       return new Response(
         JSON.stringify({ success: false, error: 'Parâmetros inválidos' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -81,6 +140,14 @@ serve(async (req) => {
         }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    if (action === 'delete_precheck') {
+      const report = await buildDnsRiskReport(site.domain, hostingerToken);
+      return new Response(JSON.stringify({ success: true, ...report }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     const now = new Date().toISOString();
@@ -112,6 +179,19 @@ serve(async (req) => {
         detail: { actor_email: actorEmail },
       });
     } else if (action === 'delete') {
+      // Refaz a checagem aqui (não confia só no que a tela mostrou) - sem a
+      // confirmação explícita, não exclui um site cuja DNS some junto.
+      const report = await buildDnsRiskReport(site.domain, hostingerToken);
+      if (report.at_risk && confirm_dns_loss !== true) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: `A DNS de ${site.domain} será apagada junto com o site (domínio fora do portfólio da Hostinger). Confirme que ela foi copiada pra outro lugar antes de excluir.`,
+            ...report,
+          }),
+          { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
       if (site.platform === 'h5g') {
         await hostingerFetch(`/agency-hosting/v1/websites/${site.external_uid}`, hostingerToken, {
           method: 'DELETE',
@@ -128,7 +208,14 @@ serve(async (req) => {
         event_type: 'site_deleted_manual',
         domain: site.domain,
         order_id: site.order_id,
-        detail: { actor_email: actorEmail, platform: site.platform },
+        detail: {
+          actor_email: actorEmail,
+          platform: site.platform,
+          dns_zone_lost: report.at_risk,
+          // Guarda a zona como estava - se alguém excluiu sem copiar a DNS,
+          // dá pra recriar os registros (MX do cliente etc.) a partir daqui.
+          dns_records_before_delete: report.at_risk ? report.zone_records : undefined,
+        },
       });
     } else if (action === 'clear_cache') {
       if (site.platform === 'h5g') {
