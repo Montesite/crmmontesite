@@ -451,17 +451,15 @@ export default function HostingMonitor() {
       // hosting-sync só puxa planos/sites do painel da Hostinger - quem testa
       // se o site está no ar é o github-sync. Recheca na hora só os que estão
       // em "Fora do ar", pra quem corrigiu um domínio ver a lista atualizar.
+      // Falha aqui não invalida a sincronização com a Hostinger que já deu certo.
       const recheck = await supabase.functions.invoke("github-sync", { body: { only_flagged: true } });
-      if (recheck.error) {
-        const message = await getFunctionErrorMessage(recheck.error, "Erro ao rechecar sites fora do ar");
-        throw new Error(message);
-      }
-      const stillDown = recheck.data?.needs_client_action ?? 0;
-      const rechecked = recheck.data?.sites_checked ?? 0;
+      const recheckSummary = recheck.error
+        ? " Não foi possível rechecar os sites fora do ar agora."
+        : ` ${recheck.data?.sites_checked ?? 0} site(s) fora do ar rechecado(s), ${recheck.data?.needs_client_action ?? 0} continua(m) com problema.`;
 
       toast({
         title: "Sincronização concluída",
-        description: `${result.created?.length ?? 0} site(s) novo(s), ${result.deleted?.length ?? 0} removido(s). ${rechecked} site(s) fora do ar rechecado(s), ${stillDown} continua(m) com problema.`,
+        description: `${result.created?.length ?? 0} site(s) novo(s), ${result.deleted?.length ?? 0} removido(s).${recheckSummary}`,
       });
       queryClient.invalidateQueries({ queryKey: ["hosting_plans"] });
       queryClient.invalidateQueries({ queryKey: ["hosting_websites"] });

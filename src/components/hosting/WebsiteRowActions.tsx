@@ -189,7 +189,10 @@ export function WebsiteRowActions({ site }: { site: WebsiteRow }) {
     enabled: deleteOpen,
     staleTime: 0,
   });
-  const deleteBlocked = loadingDnsRisk || !!dnsRiskError || (!!dnsRisk?.at_risk && !dnsLossConfirmed);
+  // Se a checagem falhar (API da Hostinger fora, rate-limit...), não trava a
+  // exclusão pra sempre - pede a mesma confirmação manual de quem tem risco.
+  const needsDnsConfirmation = !!dnsRiskError || !!dnsRisk?.at_risk;
+  const deleteBlocked = loadingDnsRisk || (needsDnsConfirmation && !dnsLossConfirmed);
 
   const actionMutation = useMutation({
     mutationFn: async (action: "deactivate" | "reactivate" | "delete" | "clear_cache") => {
@@ -397,10 +400,24 @@ export function WebsiteRowActions({ site }: { site: WebsiteRow }) {
             </p>
           )}
           {dnsRiskError && (
-            <p className="text-sm text-red-600">
-              {dnsRiskError instanceof Error ? dnsRiskError.message : "Não foi possível checar a DNS do domínio."} A
-              exclusão fica bloqueada até a checagem funcionar.
-            </p>
+            <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+              <p className="flex items-start gap-2 font-medium text-amber-700 dark:text-amber-400">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                Não foi possível checar se a DNS de {site.domain} some junto com o site
+              </p>
+              <p className="text-muted-foreground">
+                Antes de excluir, confira no hPanel se o domínio está em Domínios → Portfólio. Se não estiver, a DNS
+                (inclusive o MX do e-mail do cliente) será apagada junto — copie os registros antes.
+              </p>
+              <label className="flex items-start gap-2 pt-1">
+                <Checkbox
+                  checked={dnsLossConfirmed}
+                  onCheckedChange={(checked) => setDnsLossConfirmed(checked === true)}
+                  className="mt-0.5"
+                />
+                <span>Conferi a DNS do domínio e posso excluir.</span>
+              </label>
+            </div>
           )}
           {dnsRisk?.at_risk && (
             <div className="space-y-2 rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm">
