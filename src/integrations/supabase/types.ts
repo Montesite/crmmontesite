@@ -241,6 +241,11 @@ export type Database = {
       }
       hosting_websites: {
         Row: {
+          mail_dns_checked_at: string | null
+          mail_dns_note: string | null
+          mail_dns_snapshot: Json | null
+          mail_dns_snapshot_at: string | null
+          mail_dns_status: string | null
           client_action_note: string | null
           deleted_at: string | null
           domain: string
@@ -269,6 +274,11 @@ export type Database = {
           platform: string
         }
         Insert: {
+          mail_dns_checked_at?: string | null
+          mail_dns_note?: string | null
+          mail_dns_snapshot?: Json | null
+          mail_dns_snapshot_at?: string | null
+          mail_dns_status?: string | null
           client_action_note?: string | null
           deleted_at?: string | null
           domain: string
@@ -297,6 +307,11 @@ export type Database = {
           platform: string
         }
         Update: {
+          mail_dns_checked_at?: string | null
+          mail_dns_note?: string | null
+          mail_dns_snapshot?: Json | null
+          mail_dns_snapshot_at?: string | null
+          mail_dns_status?: string | null
           client_action_note?: string | null
           deleted_at?: string | null
           domain?: string

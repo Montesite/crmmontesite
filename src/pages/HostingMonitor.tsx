@@ -41,8 +41,10 @@ import {
   Code,
   CalendarClock,
   Phone,
+  Mail,
 } from "lucide-react";
 import { WebsiteRowActions } from "@/components/hosting/WebsiteRowActions";
+import { MailDnsAlerts, type MailDnsAlertSite } from "@/components/hosting/MailDnsAlerts";
 import { getFunctionErrorMessage } from "@/lib/functionError";
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100];
@@ -399,6 +401,18 @@ export default function HostingMonitor() {
       .sort((a, b) => new Date(a.domain_expires_at!).getTime() - new Date(b.domain_expires_at!).getTime());
   }, [websites]);
 
+  // Um domínio pode ter mais de uma linha (uma por order_id) - mostra uma vez só.
+  const mailAlertSites = useMemo(() => {
+    const seen = new Set<string>();
+    return (websites ?? []).filter((w) => {
+      if (w.mail_dns_status !== "lost" && w.mail_dns_status !== "changed") return false;
+      const key = w.domain.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }) as unknown as MailDnsAlertSite[];
+  }, [websites]);
+
   const totalPages = Math.max(1, Math.ceil(filteredWebsites.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const paginatedWebsites = useMemo(
@@ -620,6 +634,13 @@ export default function HostingMonitor() {
               Fora do ar
               {foraDoArCount > 0 && (
                 <Badge className="bg-red-600 hover:bg-red-600 h-5 px-1.5">{foraDoArCount}</Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="email" className="gap-1.5">
+              <Mail className="h-3.5 w-3.5 text-red-600" />
+              E-mail
+              {mailAlertSites.length > 0 && (
+                <Badge className="bg-red-600 hover:bg-red-600 h-5 px-1.5">{mailAlertSites.length}</Badge>
               )}
             </TabsTrigger>
             <TabsTrigger value="vencendo" className="gap-1.5">
@@ -1072,6 +1093,10 @@ export default function HostingMonitor() {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="email" className="space-y-4">
+            <MailDnsAlerts sites={mailAlertSites} />
           </TabsContent>
 
           <TabsContent value="vencendo" className="space-y-4">
