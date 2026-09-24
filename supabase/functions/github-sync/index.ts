@@ -354,32 +354,74 @@ async function readTextCapped(res: Response, maxBytes: number): Promise<string> 
   return new TextDecoder('utf-8').decode(buf);
 }
 
+type FetchAttempt = { ok: true; html: string } | { ok: false; status: number | null; message: string };
+
+async function fetchLivePage(url: string): Promise<FetchAttempt> {
+  try {
+    const res = await fetchWithTimeout(url, { redirect: 'follow' }, FETCH_TIMEOUT_MS);
+    if (!res.ok) {
+      await res.body?.cancel();
+      return { ok: false, status: res.status, message: `HTTP ${res.status}` };
+    }
+    return { ok: true, html: await readTextCapped(res, MAX_LIVE_BODY_BYTES) };
+  } catch (e) {
+    return { ok: false, status: null, message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+// Uma tentativa só gerava falso "fora do ar" com qualquer falha passageira
+// (erro de HTTP/2 via IPv6, timeout pontual) - dipaulacontabilidade.com.br e
+// dearf.com.br caíram na lista assim em 2026-09-23/24 estando no ar. Tenta de
+// novo antes de concluir; 4xx (exceto 429) é resposta definitiva do servidor.
+const RETRY_DELAY_MS = 2000;
+
+async function fetchLivePageWithRetry(url: string): Promise<FetchAttempt> {
+  const first = await fetchLivePage(url);
+  if (first.ok) return first;
+  if (first.status !== null && first.status < 500 && first.status !== 429) return first;
+  await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+  return await fetchLivePage(url);
+}
+
 // Checa se o domínio está de pé, independente de ter repositório do GitHub
 // associado ou não - antes, sites sem repositório encontrado (~2/3 da base)
 // nunca tinham o próprio domínio checado, então um domínio derrubado ou com
 // DNS quebrado nesse grupo passava batido. Agora todo site ativo (exceto os
 // já marcados como sem hospedagem) tem o domínio realmente aberto e checado.
 async function checkLiveSite(domain: string): Promise<LiveCheckResult> {
-  try {
-    const res = await fetchWithTimeout(`https://${domain}/`, { redirect: 'follow' }, FETCH_TIMEOUT_MS);
-    if (!res.ok) {
+  const apex = await fetchLivePageWithRetry(`https://${domain}/`);
+  if (apex.ok) {
+    const placeholderNote = detectHostingPlaceholder(apex.html);
+    return { html: apex.html, needsClientAction: !!placeholderNote, note: placeholderNote };
+  }
+
+  // Achado em 2026-09-24: 8 sites migrados pra VPS ficaram com um "A @" antigo
+  // (página estacionada da Hostinger, sem SSL) ao lado do ALIAS certo - o www
+  // abria normal e o domínio sem www não. Continua precisando de ação, mas a
+  // nota diz exatamente o que corrigir em vez do genérico "fora do ar".
+  if (!domain.toLowerCase().startsWith('www.')) {
+    const www = await fetchLivePageWithRetry(`https://www.${domain}/`);
+    if (www.ok && !detectHostingPlaceholder(www.html)) {
       return {
-        html: null,
+        html: www.html,
         needsClientAction: true,
-        note: `Site respondeu HTTP ${res.status} ao vivo - hospedagem ou domínio com problema`,
+        note: `Só o www funciona - https://${domain}/ falhou (${apex.message}). Provável registro "A @" antigo na DNS apontando pra outro servidor`,
       };
     }
-    const html = await readTextCapped(res, MAX_LIVE_BODY_BYTES);
-    const placeholderNote = detectHostingPlaceholder(html);
-    return { html, needsClientAction: !!placeholderNote, note: placeholderNote };
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
+  }
+
+  if (apex.status !== null) {
     return {
       html: null,
       needsClientAction: true,
-      note: `Site não respondeu (${message}) - domínio pode estar com DNS quebrado, certificado inválido ou fora do ar`,
+      note: `Site respondeu HTTP ${apex.status} ao vivo - hospedagem ou domínio com problema`,
     };
   }
+  return {
+    html: null,
+    needsClientAction: true,
+    note: `Site não respondeu (${apex.message}) - domínio pode estar com DNS quebrado, certificado inválido ou fora do ar`,
+  };
 }
 
 async function sha256Hex(text: string): Promise<string> {
@@ -450,10 +492,17 @@ serve(async (req) => {
     }
 
     // 2. Pega o lote de sites mais desatualizados (nunca checados primeiro).
-    const { data: sites, error: sitesError } = await supabase
+    // Com { only_flagged: true } (botão "Sincronizar agora" da aba Hospedagem)
+    // recheca só quem está hoje na aba "Fora do ar" - o lote normal de 300
+    // pode levar ~1 dia pra chegar num site que já foi corrigido.
+    const body = await req.json().catch(() => ({}));
+    const onlyFlagged = body?.only_flagged === true;
+    let sitesQuery = supabase
       .from('hosting_websites')
       .select('id, domain, is_placeholder, is_decommissioned, github_backup_url, github_repo_owner, github_repo_name, linked_project_id, projects:linked_project_id (client_name)')
-      .eq('is_placeholder', false)
+      .eq('is_placeholder', false);
+    if (onlyFlagged) sitesQuery = sitesQuery.eq('needs_client_action', true);
+    const { data: sites, error: sitesError } = await sitesQuery
       .order('github_checked_at', { ascending: true, nullsFirst: true })
       .limit(BATCH_SIZE);
     if (sitesError) throw sitesError;
@@ -503,6 +552,11 @@ serve(async (req) => {
           update.needs_client_action = live.needsClientAction;
           Object.assign(update, await buildRegistryFields(site.domain, live, now));
           if (live.needsClientAction) needsClientAction += 1;
+        } else {
+          // Site sem hospedagem é caso encerrado - sem isso a flag de antes da
+          // exclusão ficava pra sempre na aba "Fora do ar".
+          update.needs_client_action = false;
+          update.client_action_note = null;
         }
         await supabase.from('hosting_websites').update(update).eq('id', site.id);
         return;
@@ -518,12 +572,27 @@ serve(async (req) => {
         update.github_backup_url = `https://github.com/${repo.owner}/${repo.name}`;
       }
 
+      // Checa o domínio ao vivo antes (e fora) das chamadas à API do GitHub -
+      // assim uma falha de rede no domínio do cliente não vira um
+      // "fetch_error" genérico, e uma falha da API do GitHub não deixa a flag
+      // needs_client_action da rodada anterior congelada.
+      let live: LiveCheckResult | null = null;
+      if (site.is_decommissioned) {
+        update.needs_client_action = false;
+        update.client_action_note = null;
+      } else {
+        live = await checkLiveSite(site.domain);
+        update.needs_client_action = live.needsClientAction;
+        Object.assign(update, await buildRegistryFields(site.domain, live, now));
+        if (live.needsClientAction) needsClientAction += 1;
+      }
+
       try {
         const commit = await githubFetch(`/repos/${repo.owner}/${repo.name}/commits/${repo.default_branch}`, githubToken);
         update.github_commit_sha = commit.sha;
         update.github_commit_at = commit.commit?.author?.date ?? null;
 
-        if (site.is_decommissioned) {
+        if (!live) {
           update.github_sync_status = 'no_live_site';
         } else {
           const contentRes = await githubFetch(
@@ -536,17 +605,6 @@ serve(async (req) => {
           // com o HTML ao vivo (que o fetch já decodifica como UTF-8 de verdade).
           const repoBytes = Uint8Array.from(atob((contentRes.content ?? '').replace(/\s/g, '')), (c) => c.charCodeAt(0));
           const repoHtml = new TextDecoder('utf-8').decode(repoBytes);
-
-          // Checa o domínio ao vivo separado do restante (que é tudo API do
-          // GitHub) - assim uma falha de rede no domínio do cliente não vira
-          // um "fetch_error" genérico misturado com falha da API do GitHub,
-          // e sim um needs_client_action com o motivo de verdade.
-          const live = await checkLiveSite(site.domain);
-          update.needs_client_action = live.needsClientAction;
-          Object.assign(update, await buildRegistryFields(site.domain, live, now));
-          if (live.needsClientAction) {
-            needsClientAction += 1;
-          }
 
           if (live.html === null) {
             update.github_sync_status = 'site_unreachable';

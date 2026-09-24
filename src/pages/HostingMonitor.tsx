@@ -433,9 +433,21 @@ export default function HostingMonitor() {
         throw new Error(message);
       }
       const result = response.data;
+
+      // hosting-sync só puxa planos/sites do painel da Hostinger - quem testa
+      // se o site está no ar é o github-sync. Recheca na hora só os que estão
+      // em "Fora do ar", pra quem corrigiu um domínio ver a lista atualizar.
+      const recheck = await supabase.functions.invoke("github-sync", { body: { only_flagged: true } });
+      if (recheck.error) {
+        const message = await getFunctionErrorMessage(recheck.error, "Erro ao rechecar sites fora do ar");
+        throw new Error(message);
+      }
+      const stillDown = recheck.data?.needs_client_action ?? 0;
+      const rechecked = recheck.data?.sites_checked ?? 0;
+
       toast({
         title: "Sincronização concluída",
-        description: `${result.created?.length ?? 0} site(s) novo(s), ${result.deleted?.length ?? 0} removido(s).`,
+        description: `${result.created?.length ?? 0} site(s) novo(s), ${result.deleted?.length ?? 0} removido(s). ${rechecked} site(s) fora do ar rechecado(s), ${stillDown} continua(m) com problema.`,
       });
       queryClient.invalidateQueries({ queryKey: ["hosting_plans"] });
       queryClient.invalidateQueries({ queryKey: ["hosting_websites"] });
